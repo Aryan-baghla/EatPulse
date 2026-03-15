@@ -110,101 +110,13 @@ Resources:
               #!/bin/bash
               exec > /var/log/eatpulse-init.log 2>&1
               echo "=== EatPulse bootstrap $(date -u) ==="
-
-              SECRET_ID="${SecretsManagerSecretId}"
-              REGION="${AWS::Region}"
-              APP_DIR="/opt/eatpulse"
-              APP_USER="eatpulse"
-
-              # ── Packages (individual to avoid one failure aborting all) ───
-              dnf update -y -q || true
-              dnf install -y python3.11 python3.11-pip python3.11-devel || true
-              dnf install -y nginx || true
-              dnf install -y git jq ruby wget gcc gcc-c++ || true
-
-              # ── CodeDeploy agent ──────────────────────────────────────────
-              wget -q "https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install" \
-                  -O /tmp/cd-install && chmod +x /tmp/cd-install && /tmp/cd-install auto || true
-              systemctl enable codedeploy-agent && systemctl start codedeploy-agent || true
-
-              # ── App user + directories ────────────────────────────────────
-              id -u $APP_USER &>/dev/null || \
-                  useradd --system --no-create-home --shell /sbin/nologin $APP_USER
-              mkdir -p $APP_DIR
-              python3.11 -m venv $APP_DIR/venv || true
-
-              # ── Fetch secrets ─────────────────────────────────────────────
-              SECRETS=$(aws secretsmanager get-secret-value \
-                  --region "$REGION" --secret-id "$SECRET_ID" \
-                  --query SecretString --output text 2>/dev/null || echo '{}')
-              {
-                echo "AWS_SECRETS_MANAGER_SECRET_ID=$SECRET_ID"
-                echo "AWS_REGION=$REGION"
-                echo "$SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"' 2>/dev/null || true
-              } > $APP_DIR/.env
-              chmod 600 $APP_DIR/.env
-
-              # ── Nginx config (write using python to avoid heredoc issues) ─
-              python3 - <<'PYEOF'
-              nginx_conf = """server {
-                  listen 80;
-                  location = /health {
-                      access_log off;
-                      return 200 "ok\\n";
-                      add_header Content-Type text/plain;
-                  }
-                  location / {
-                      proxy_pass http://127.0.0.1:8000;
-                      proxy_http_version 1.1;
-                      proxy_set_header Host $host;
-                      proxy_set_header X-Real-IP $remote_addr;
-                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
-                      client_max_body_size 10M;
-                      proxy_read_timeout 60s;
-                  }
-              }
-              """
-              import os
-              os.makedirs("/etc/nginx/conf.d", exist_ok=True)
-              with open("/etc/nginx/conf.d/eatpulse.conf", "w") as f:
-                  f.write(nginx_conf)
-              # Remove default config if exists
-              default = "/etc/nginx/conf.d/default.conf"
-              if os.path.exists(default):
-                  os.remove(default)
-              PYEOF
-
-              systemctl enable nginx && systemctl start nginx || true
-
-              # ── Systemd service ────────────────────────────────────────────
-              python3 - <<'PYEOF'
-              svc = """[Unit]
-              Description=EatPulse FastAPI + Telegram Bot
-              After=network.target
-
-              [Service]
-              Type=exec
-              User=eatpulse
-              WorkingDirectory=/opt/eatpulse
-              EnvironmentFile=/opt/eatpulse/.env
-              ExecStart=/opt/eatpulse/venv/bin/uvicorn dashboard.api.app:create_app --factory --host 127.0.0.1 --port 8000 --workers 2
-              Restart=always
-              RestartSec=5
-              StandardOutput=journal
-              StandardError=journal
-
-              [Install]
-              WantedBy=multi-user.target
-              """
-              with open("/etc/systemd/system/eatpulse-api.service", "w") as f:
-                  f.write(svc)
-              PYEOF
-              systemctl daemon-reload
-              systemctl enable eatpulse-api
-
-              chown -R $APP_USER:$APP_USER $APP_DIR 2>/dev/null || true
-              echo "=== Bootstrap complete ==="
+              # Install minimal deps for aws cli + wget (pre-installed on AL2023)
+              dnf install -y wget jq || true
+              # Download and run the bootstrap script from S3
+              aws s3 cp s3://${ArtifactsBucketName}/scripts/bootstrap.sh /tmp/bootstrap.sh \
+                  --region ${AWS::Region}
+              chmod +x /tmp/bootstrap.sh
+              /tmp/bootstrap.sh "${SecretsManagerSecretId}" "${AWS::Region}"
         TagSpecifications:
           - ResourceType: instance
             Tags:
