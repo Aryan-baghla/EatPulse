@@ -11,6 +11,9 @@ Parameters:
   EC2SecurityGroupId:
     Type: String
     Description: Security group ID of the EC2 instances (to allow inbound 5432)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Default VPC subnets (at least 2 AZs required for Aurora)
 
 Resources:
   # ── Security Group ──────────────────────────────────────────────────────────
@@ -29,30 +32,12 @@ Resources:
         - Key: Project
           Value: EatPulse
 
-  # ── DB Subnet Group (uses default VPC subnets) ──────────────────────────────
+  # ── DB Subnet Group ─────────────────────────────────────────────────────────
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: EatPulse Aurora subnet group (default VPC)
-      SubnetIds: !Split [",", !ImportValue EatPulse-DefaultSubnets]
-      Tags:
-        - Key: Project
-          Value: EatPulse
-
-  # ── Secrets Manager: DB credentials ────────────────────────────────────────
-  DBSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub "eatpulse/${Environment}/db"
-      Description: EatPulse Aurora credentials
-      SecretString: !Sub |
-        {
-          "username": "eatpulse",
-          "password": "${DBPassword}",
-          "engine": "postgres",
-          "port": 5432,
-          "dbname": "eatpulse"
-        }
+      SubnetIds: !Ref SubnetIds
       Tags:
         - Key: Project
           Value: EatPulse
@@ -65,7 +50,7 @@ Resources:
     Properties:
       DBClusterIdentifier: !Sub "eatpulse-${Environment}"
       Engine: aurora-postgresql
-      EngineVersion: "15.4"
+      EngineVersion: "16.6"
       MasterUsername: eatpulse
       MasterUserPassword: !Ref DBPassword
       DatabaseName: eatpulse
@@ -79,8 +64,6 @@ Resources:
       BackupRetentionPeriod: 7
       PreferredBackupWindow: "02:00-03:00"
       PreferredMaintenanceWindow: "sun:03:00-sun:04:00"
-      EnableCloudwatchLogsExports:
-        - postgresql
       Tags:
         - Key: Project
           Value: EatPulse
@@ -105,10 +88,6 @@ Outputs:
     Value: !GetAtt DBCluster.Endpoint.Address
     Export:
       Name: EatPulse-DBEndpoint
-  DBSecretArn:
-    Value: !Ref DBSecret
-    Export:
-      Name: EatPulse-DBSecretArn
   DBSecurityGroupId:
     Value: !GetAtt DBSecurityGroup.GroupId
     Export:

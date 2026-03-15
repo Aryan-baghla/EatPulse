@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: EC2 Spot t3.small + ASG for EatPulse (default VPC)
+Description: EC2 Spot t3.small + ASG for EatPulse (default VPC, SSM access only)
 
 Parameters:
   Environment:
@@ -8,9 +8,6 @@ Parameters:
   InstanceType:
     Type: String
     Default: t3.small
-  KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2 key pair for SSH access
   VpcId:
     Type: AWS::EC2::VPC::Id
   SubnetIds:
@@ -38,10 +35,6 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref ALBSecurityGroupId
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0  # Restrict to your IP in production
       Tags:
         - Key: Name
           Value: eatpulse-ec2-sg
@@ -102,7 +95,6 @@ Resources:
       LaunchTemplateData:
         ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
         InstanceType: !Ref InstanceType
-        KeyName: !Ref KeyPairName
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
@@ -110,19 +102,123 @@ Resources:
         InstanceMarketOptions:
           MarketType: spot
           SpotOptions:
-            MaxPrice: "0.0208"  # t3.small on-demand price in ap-south-1
+            MaxPrice: "0.0208"
             SpotInstanceType: one-time
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -e
-            exec > >(tee /var/log/userdata.log | logger -t userdata -s 2>/dev/console) 2>&1
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              set -euo pipefail
+              exec > >(tee /var/log/eatpulse-init.log) 2>&1
+              echo "=== EatPulse bootstrap $(date -u) ==="
 
-            # Signal CloudFormation
-            /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource LaunchTemplate --region ${AWS::Region} || true
+              SECRET_ID="${SecretsManagerSecretId}"
+              REGION="${AWS::Region}"
+              APP_DIR="/opt/eatpulse"
+              APP_USER="eatpulse"
 
-            # Bootstrap script
-            /opt/eatpulse-bootstrap/userdata.sh "${SecretsManagerSecretId}" "${Environment}"
+              # ── Packages ───────────────────────────────────────────────────
+              dnf update -y -q
+              dnf install -y -q python3.11 python3.11-pip python3.11-devel \
+                  nginx pgbouncer postgresql15 git jq ruby wget gcc gcc-c++
+
+              # ── CodeDeploy agent ───────────────────────────────────────────
+              wget -q "https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install" \
+                  -O /tmp/cd-install
+              chmod +x /tmp/cd-install
+              /tmp/cd-install auto
+              systemctl enable --now codedeploy-agent
+
+              # ── App user + directories ─────────────────────────────────────
+              id -u $APP_USER &>/dev/null || \
+                  useradd --system --no-create-home --shell /sbin/nologin $APP_USER
+              mkdir -p $APP_DIR
+              python3.11 -m venv $APP_DIR/venv
+
+              # ── Fetch secrets ──────────────────────────────────────────────
+              SECRETS=$(aws secretsmanager get-secret-value \
+                  --region "$REGION" --secret-id "$SECRET_ID" \
+                  --query SecretString --output text)
+
+              {
+                echo "AWS_SECRETS_MANAGER_SECRET_ID=$SECRET_ID"
+                echo "AWS_REGION=$REGION"
+                echo "$SECRETS" | jq -r 'to_entries[] | "\(.key)=\(.value)"'
+              } > $APP_DIR/.env
+              chmod 600 $APP_DIR/.env
+
+              DB_PASS=$(echo "$SECRETS" | jq -r '.DB_PASSWORD // "changeme"')
+
+              # ── Nginx ──────────────────────────────────────────────────────
+              cat > /etc/nginx/conf.d/eatpulse.conf <<'NGINX'
+              server {
+                  listen 80;
+                  location = /health {
+                      access_log off;
+                      return 200 "ok\n";
+                      add_header Content-Type text/plain;
+                  }
+                  location / {
+                      proxy_pass http://127.0.0.1:8000;
+                      proxy_http_version 1.1;
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+                      client_max_body_size 10M;
+                      proxy_read_timeout 60s;
+                  }
+              }
+              NGINX
+              rm -f /etc/nginx/conf.d/default.conf
+              systemctl enable --now nginx
+
+              # ── PgBouncer placeholder ─────────────────────────────────────
+              mkdir -p /var/log/pgbouncer /var/run/pgbouncer
+              chown pgbouncer:pgbouncer /var/log/pgbouncer /var/run/pgbouncer 2>/dev/null || true
+              cat > /etc/pgbouncer/pgbouncer.ini <<'PGBC'
+              [databases]
+              eatpulse = host=127.0.0.1 port=5433 dbname=eatpulse
+              [pgbouncer]
+              listen_addr=127.0.0.1
+              listen_port=5432
+              auth_type=scram-sha-256
+              auth_file=/etc/pgbouncer/userlist.txt
+              pool_mode=transaction
+              max_client_conn=100
+              default_pool_size=10
+              server_idle_timeout=300
+              log_connections=0
+              PGBC
+              printf '"eatpulse" "%s"\n' "$DB_PASS" > /etc/pgbouncer/userlist.txt
+              chmod 600 /etc/pgbouncer/userlist.txt
+
+              # ── Systemd service ────────────────────────────────────────────
+              cat > /etc/systemd/system/eatpulse-api.service <<SVCEOF
+              [Unit]
+              Description=EatPulse FastAPI + Telegram Bot
+              After=network.target
+
+              [Service]
+              Type=exec
+              User=$APP_USER
+              WorkingDirectory=$APP_DIR
+              EnvironmentFile=$APP_DIR/.env
+              ExecStart=$APP_DIR/venv/bin/uvicorn dashboard.api.app:create_app \
+                  --factory --host 127.0.0.1 --port 8000 --workers 2
+              Restart=always
+              RestartSec=5
+              StandardOutput=journal
+              StandardError=journal
+
+              [Install]
+              WantedBy=multi-user.target
+              SVCEOF
+              systemctl daemon-reload
+              systemctl enable eatpulse-api
+
+              chown -R $APP_USER:$APP_USER $APP_DIR
+              echo "=== Bootstrap complete ==="
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -147,7 +243,7 @@ Resources:
         - !Ref TargetGroupArn
       CapacityRebalance: true
       HealthCheckType: ELB
-      HealthCheckGracePeriod: 120
+      HealthCheckGracePeriod: 180
       Tags:
         - Key: Name
           Value: !Sub "eatpulse-${Environment}"
@@ -159,7 +255,7 @@ Resources:
       AutoScalingRollingUpdate:
         MinInstancesInService: 1
         MaxBatchSize: 1
-        PauseTime: PT2M
+        PauseTime: PT3M
         WaitOnResourceSignals: false
 
 Outputs:
