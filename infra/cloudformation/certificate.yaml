@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ACM TLS certificate for dashboard.eatpulse.in (DNS validation)
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: dashboard.eatpulse.in
+  HostedZoneId:
+    Type: String
+    Description: Route 53 Hosted Zone ID for eatpulse.in
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Project
+          Value: EatPulse
+
+Outputs:
+  CertificateArn:
+    Value: !Ref Certificate
+    Export:
+      Name: EatPulse-CertificateArn

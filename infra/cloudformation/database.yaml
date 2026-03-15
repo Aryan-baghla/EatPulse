@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Aurora PostgreSQL Serverless v2 for EatPulse (default VPC)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+  DBPassword:
+    Type: String
+    NoEcho: true
+  EC2SecurityGroupId:
+    Type: String
+    Description: Security group ID of the EC2 instances (to allow inbound 5432)
+
+Resources:
+  # ── Security Group ──────────────────────────────────────────────────────────
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EatPulse RDS Aurora - allow from EC2 only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroupId
+      Tags:
+        - Key: Name
+          Value: eatpulse-db-sg
+        - Key: Project
+          Value: EatPulse
+
+  # ── DB Subnet Group (uses default VPC subnets) ──────────────────────────────
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: EatPulse Aurora subnet group (default VPC)
+      SubnetIds: !Split [",", !ImportValue EatPulse-DefaultSubnets]
+      Tags:
+        - Key: Project
+          Value: EatPulse
+
+  # ── Secrets Manager: DB credentials ────────────────────────────────────────
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "eatpulse/${Environment}/db"
+      Description: EatPulse Aurora credentials
+      SecretString: !Sub |
+        {
+          "username": "eatpulse",
+          "password": "${DBPassword}",
+          "engine": "postgres",
+          "port": 5432,
+          "dbname": "eatpulse"
+        }
+      Tags:
+        - Key: Project
+          Value: EatPulse
+
+  # ── Aurora Serverless v2 Cluster ────────────────────────────────────────────
+  DBCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBClusterIdentifier: !Sub "eatpulse-${Environment}"
+      Engine: aurora-postgresql
+      EngineVersion: "15.4"
+      MasterUsername: eatpulse
+      MasterUserPassword: !Ref DBPassword
+      DatabaseName: eatpulse
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt DBSecurityGroup.GroupId
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 4
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "02:00-03:00"
+      PreferredMaintenanceWindow: "sun:03:00-sun:04:00"
+      EnableCloudwatchLogsExports:
+        - postgresql
+      Tags:
+        - Key: Project
+          Value: EatPulse
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ── Aurora Serverless v2 Instance ───────────────────────────────────────────
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceIdentifier: !Sub "eatpulse-${Environment}-instance-1"
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - Key: Project
+          Value: EatPulse
+
+Outputs:
+  DBClusterEndpoint:
+    Value: !GetAtt DBCluster.Endpoint.Address
+    Export:
+      Name: EatPulse-DBEndpoint
+  DBSecretArn:
+    Value: !Ref DBSecret
+    Export:
+      Name: EatPulse-DBSecretArn
+  DBSecurityGroupId:
+    Value: !GetAtt DBSecurityGroup.GroupId
+    Export:
+      Name: EatPulse-DBSecurityGroupId

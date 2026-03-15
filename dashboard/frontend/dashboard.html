@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EatPulse — Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="nav-brand">🥗 EatPulse</div>
+    <div class="nav-right">
+      <span id="user-name" class="nav-username"></span>
+      <button class="btn btn-outline btn-sm" onclick="logout()">Logout</button>
+    </div>
+  </nav>
+
+  <main class="container">
+    <!-- Summary Cards -->
+    <section class="summary-cards">
+      <div class="card stat-card">
+        <div class="stat-label">Today's Calories</div>
+        <div class="stat-value" id="today-calories">—</div>
+        <div class="stat-sub">of 2000 kcal target</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Week Total</div>
+        <div class="stat-value" id="week-calories">—</div>
+        <div class="stat-sub">kcal this week</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Health Score</div>
+        <div class="stat-value" id="health-score">—</div>
+        <div class="stat-sub">out of 10</div>
+      </div>
+    </section>
+
+    <!-- Week Navigation -->
+    <section class="week-nav">
+      <button class="btn btn-outline" id="prev-week" onclick="changeWeek(-1)">&#8592; Previous</button>
+      <span id="week-label" class="week-label"></span>
+      <button class="btn btn-outline" id="next-week" onclick="changeWeek(1)">Next &#8594;</button>
+    </section>
+
+    <!-- Timetable -->
+    <section class="card timetable-section">
+      <h2 class="section-title">Meal History</h2>
+      <div class="timetable-wrapper">
+        <div class="timetable" id="timetable">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Charts Row -->
+    <section class="charts-row">
+      <div class="card chart-card">
+        <h3 class="chart-title">Daily Calories</h3>
+        <canvas id="caloriesChart"></canvas>
+      </div>
+      <div class="card chart-card">
+        <h3 class="chart-title">Weekly Health Trend</h3>
+        <canvas id="healthChart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

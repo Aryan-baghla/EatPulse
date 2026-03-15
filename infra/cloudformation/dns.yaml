@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Route 53 A alias record — dashboard.eatpulse.in → ALB
+
+Parameters:
+  HostedZoneId:
+    Type: String
+    Description: Route 53 Hosted Zone ID for eatpulse.in
+  DomainName:
+    Type: String
+    Default: dashboard.eatpulse.in
+  ALBDNSName:
+    Type: String
+  ALBHostedZoneId:
+    Type: String
+
+Resources:
+  DashboardDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !Ref ALBDNSName
+        HostedZoneId: !Ref ALBHostedZoneId
+        EvaluateTargetHealth: true
+
+Outputs:
+  RecordName:
+    Value: !Ref DashboardDNSRecord

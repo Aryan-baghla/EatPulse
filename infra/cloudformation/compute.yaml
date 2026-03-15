@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 Spot t3.small + ASG for EatPulse (default VPC)
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+  InstanceType:
+    Type: String
+    Default: t3.small
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH access
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  TargetGroupArn:
+    Type: String
+  ALBSecurityGroupId:
+    Type: String
+  SecretsManagerSecretId:
+    Type: String
+    Description: Secrets Manager secret ID containing all app secrets
+  ArtifactsBucketName:
+    Type: String
+    Description: S3 bucket for CodeDeploy deployment artifacts
+
+Resources:
+  # ── EC2 Security Group ──────────────────────────────────────────────────────
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EatPulse EC2 - allow from ALB only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroupId
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Restrict to your IP in production
+      Tags:
+        - Key: Name
+          Value: eatpulse-ec2-sg
+        - Key: Project
+          Value: EatPulse
+
+  # ── IAM Role for EC2 ────────────────────────────────────────────────────────
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "eatpulse-ec2-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: EatPulseEC2Policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:eatpulse/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}"
+                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: "*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # ── Launch Template ─────────────────────────────────────────────────────────
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "eatpulse-lt-${Environment}"
+      LaunchTemplateData:
+        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyPairName
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !GetAtt EC2SecurityGroup.GroupId
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            MaxPrice: "0.0208"  # t3.small on-demand price in ap-south-1
+            SpotInstanceType: one-time
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+            exec > >(tee /var/log/userdata.log | logger -t userdata -s 2>/dev/console) 2>&1
+
+            # Signal CloudFormation
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource LaunchTemplate --region ${AWS::Region} || true
+
+            # Bootstrap script
+            /opt/eatpulse-bootstrap/userdata.sh "${SecretsManagerSecretId}" "${Environment}"
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "eatpulse-${Environment}"
+              - Key: Project
+                Value: EatPulse
+
+  # ── Auto Scaling Group ──────────────────────────────────────────────────────
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "eatpulse-asg-${Environment}"
+      MinSize: "1"
+      MaxSize: "2"
+      DesiredCapacity: "1"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier: !Ref SubnetIds
+      TargetGroupARNs:
+        - !Ref TargetGroupArn
+      CapacityRebalance: true
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 120
+      Tags:
+        - Key: Name
+          Value: !Sub "eatpulse-${Environment}"
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: EatPulse
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT2M
+        WaitOnResourceSignals: false
+
+Outputs:
+  ASGName:
+    Value: !Ref AutoScalingGroup
+    Export:
+      Name: EatPulse-ASGName
+  EC2SecurityGroupId:
+    Value: !GetAtt EC2SecurityGroup.GroupId
+    Export:
+      Name: EatPulse-EC2SecurityGroupId
+  EC2RoleArn:
+    Value: !GetAtt EC2Role.Arn
+    Export:
+      Name: EatPulse-EC2RoleArn

@@ -1,0 +1,94 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent deploys
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: EatPulseGitHubActions
+
+      - name: Get deployment config from CloudFormation outputs
+        id: cf-outputs
+        run: |
+          STACK_OUTPUTS=$(aws cloudformation describe-stacks \
+            --stack-name eatpulse-prod \
+            --region ap-south-1 \
+            --query 'Stacks[0].Outputs' \
+            --output json)
+
+          BUCKET=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="ArtifactsBucket") | .OutputValue')
+          APP=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="CodeDeployApp") | .OutputValue')
+          GROUP=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="DeploymentGroup") | .OutputValue')
+
+          echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "group=$GROUP" >> $GITHUB_OUTPUT
+          echo "revision_key=deploy-${{ github.sha }}.zip" >> $GITHUB_OUTPUT
+
+      - name: Create deployment bundle
+        run: |
+          zip -r deploy.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "*.env" \
+            -x ".env*" \
+            -x "tests/*" \
+            -x "__pycache__/*" \
+            -x "*.pyc" \
+            -x "*.pyo" \
+            -x ".mypy_cache/*" \
+            -x ".pytest_cache/*"
+          echo "Bundle size: $(du -sh deploy.zip | cut -f1)"
+
+      - name: Upload bundle to S3
+        run: |
+          aws s3 cp deploy.zip \
+            "s3://${{ steps.cf-outputs.outputs.bucket }}/${{ steps.cf-outputs.outputs.revision_key }}"
+
+      - name: Create CodeDeploy deployment
+        id: deployment
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name "${{ steps.cf-outputs.outputs.app }}" \
+            --deployment-group-name "${{ steps.cf-outputs.outputs.group }}" \
+            --s3-location "bucket=${{ steps.cf-outputs.outputs.bucket }},bundleType=zip,key=${{ steps.cf-outputs.outputs.revision_key }}" \
+            --deployment-config-name CodeDeployDefault.OneAtATime \
+            --description "GitHub Actions deploy ${{ github.sha }}" \
+            --query 'deploymentId' \
+            --output text)
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          echo "Deployment ID: $DEPLOYMENT_ID"
+
+      - name: Wait for deployment to complete
+        run: |
+          aws deploy wait deployment-successful \
+            --deployment-id "${{ steps.deployment.outputs.deployment_id }}"
+
+      - name: Print deployment summary
+        if: always()
+        run: |
+          aws deploy get-deployment \
+            --deployment-id "${{ steps.deployment.outputs.deployment_id }}" \
+            --query 'deploymentInfo.{Status:status,Start:createTime,End:completeTime}' \
+            --output table

@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  EatPulse — Root CloudFormation stack.
+  Deploys: ACM cert, ALB, Aurora Serverless v2, Spot EC2 ASG, CodeDeploy, Route 53.
+
+  Prerequisites:
+    1. Default VPC exists in ap-south-1
+    2. eatpulse.in hosted zone already exists in Route 53
+    3. Specify your HostedZoneId in parameters
+
+  Deploy command:
+    aws cloudformation deploy \
+      --template-file infra/cloudformation/main.yaml \
+      --stack-name eatpulse-prod \
+      --region ap-south-1 \
+      --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --parameter-overrides \
+        HostedZoneId=<your-zone-id> \
+        KeyPairName=<your-keypair> \
+        TelegramBotToken=<token> \
+        TelegramBotUsername=<username> \
+        OpenAIAPIKey=<key> \
+        DBPassword=<password> \
+        JWTSecret=<secret> \
+      --s3-bucket <your-cf-templates-bucket> \
+      --s3-prefix cloudformation
+
+Parameters:
+  # ── Config ──────────────────────────────────────────────────────────────────
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+  HostedZoneId:
+    Type: String
+    Description: Route 53 Hosted Zone ID for eatpulse.in
+  DomainName:
+    Type: String
+    Default: dashboard.eatpulse.in
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+  InstanceType:
+    Type: String
+    Default: t3.small
+  ArtifactsBucketName:
+    Type: String
+    Default: eatpulse-codedeploy-artifacts-prod
+  GitHubOrg:
+    Type: String
+    Default: Aryan-baghla
+  GitHubRepo:
+    Type: String
+    Default: EatPulse
+  TemplatesBucketUrl:
+    Type: String
+    Description: S3 URL prefix for nested CF templates (e.g. https://s3.amazonaws.com/my-bucket/cloudformation)
+
+  # ── Secrets (NoEcho) ─────────────────────────────────────────────────────────
+  TelegramBotToken:
+    Type: String
+    NoEcho: true
+  TelegramBotUsername:
+    Type: String
+    NoEcho: false
+  OpenAIAPIKey:
+    Type: String
+    NoEcho: true
+  DBPassword:
+    Type: String
+    NoEcho: true
+  JWTSecret:
+    Type: String
+    NoEcho: true
+  SwiggyMCPApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Application Configuration"
+        Parameters: [Environment, DomainName, HostedZoneId, KeyPairName, InstanceType, ArtifactsBucketName, GitHubOrg, GitHubRepo, TemplatesBucketUrl, TelegramBotUsername]
+      - Label:
+          default: "Secrets"
+        Parameters: [TelegramBotToken, OpenAIAPIKey, DBPassword, JWTSecret, SwiggyMCPApiKey]
+
+Resources:
+  # ── Lookup Default VPC ───────────────────────────────────────────────────────
+  # We use a custom resource to discover default VPC subnets automatically
+  VPCLookupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DescribeVPC
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                Resource: "*"
+
+  VPCLookupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt VPCLookupRole.Arn
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+              ec2 = boto3.client('ec2', region_name=event['ResourceProperties']['Region'])
+              vpcs = ec2.describe_vpcs(Filters=[{'Name': 'isDefault', 'Values': ['true']}])
+              vpc_id = vpcs['Vpcs'][0]['VpcId']
+              subnets = ec2.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+              subnet_ids = [s['SubnetId'] for s in subnets['Subnets']]
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                  'VpcId': vpc_id,
+                  'SubnetIds': ','.join(subnet_ids),
+                  'SubnetIdList': subnet_ids[:3],
+              })
+
+  VPCLookup:
+    Type: Custom::VPCLookup
+    Properties:
+      ServiceToken: !GetAtt VPCLookupFunction.Arn
+      Region: !Ref AWS::Region
+
+  # ── Secrets Manager: App Secrets ────────────────────────────────────────────
+  AppSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "eatpulse/${Environment}"
+      Description: EatPulse application secrets
+      SecretString: !Sub |
+        {
+          "TELEGRAM_BOT_TOKEN": "${TelegramBotToken}",
+          "TELEGRAM_BOT_USERNAME": "${TelegramBotUsername}",
+          "OPENAI_API_KEY": "${OpenAIAPIKey}",
+          "JWT_SECRET": "${JWTSecret}",
+          "SWIGGY_MCP_API_KEY": "${SwiggyMCPApiKey}",
+          "DB_PASSWORD": "${DBPassword}",
+          "ENVIRONMENT": "${Environment}",
+          "BOT_MODE": "webhook",
+          "WEBHOOK_BASE_URL": "https://${DomainName}",
+          "AWS_SECRETS_MANAGER_SECRET_ID": "eatpulse/${Environment}"
+        }
+      Tags:
+        - Key: Project
+          Value: EatPulse
+
+  # ── Certificate ──────────────────────────────────────────────────────────────
+  CertificateStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/certificate.yaml"
+      Parameters:
+        DomainName: !Ref DomainName
+        HostedZoneId: !Ref HostedZoneId
+
+  # ── Load Balancer ─────────────────────────────────────────────────────────────
+  LoadBalancerStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CertificateStack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/loadbalancer.yaml"
+      Parameters:
+        VpcId: !GetAtt VPCLookup.VpcId
+        SubnetIds: !GetAtt VPCLookup.SubnetIds
+        CertificateArn: !GetAtt CertificateStack.Outputs.CertificateArn
+
+  # ── CodeDeploy (creates S3 bucket first) ─────────────────────────────────────
+  CodeDeployStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/codedeploy.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        ASGName: !Sub "eatpulse-asg-${Environment}"   # forward reference OK — CD group creates after ASG
+        ArtifactsBucketName: !Ref ArtifactsBucketName
+        GitHubOrg: !Ref GitHubOrg
+        GitHubRepo: !Ref GitHubRepo
+
+  # ── Compute (EC2 + ASG) ───────────────────────────────────────────────────────
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - LoadBalancerStack
+      - CodeDeployStack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/compute.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        InstanceType: !Ref InstanceType
+        KeyPairName: !Ref KeyPairName
+        VpcId: !GetAtt VPCLookup.VpcId
+        SubnetIds: !GetAtt VPCLookup.SubnetIds
+        TargetGroupArn: !GetAtt LoadBalancerStack.Outputs.TargetGroupArn
+        ALBSecurityGroupId: !GetAtt LoadBalancerStack.Outputs.ALBSecurityGroupId
+        SecretsManagerSecretId: !Sub "eatpulse/${Environment}"
+        ArtifactsBucketName: !Ref ArtifactsBucketName
+
+  # ── Database ──────────────────────────────────────────────────────────────────
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ComputeStack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/database.yaml"
+      Parameters:
+        Environment: !Ref Environment
+        DBPassword: !Ref DBPassword
+        EC2SecurityGroupId: !GetAtt ComputeStack.Outputs.EC2SecurityGroupId
+
+  # ── DNS ───────────────────────────────────────────────────────────────────────
+  DNSStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LoadBalancerStack
+    Properties:
+      TemplateURL: !Sub "${TemplatesBucketUrl}/dns.yaml"
+      Parameters:
+        HostedZoneId: !Ref HostedZoneId
+        DomainName: !Ref DomainName
+        ALBDNSName: !GetAtt LoadBalancerStack.Outputs.ALBDNSName
+        ALBHostedZoneId: !GetAtt LoadBalancerStack.Outputs.ALBHostedZoneId
+
+Outputs:
+  DashboardURL:
+    Value: !Sub "https://${DomainName}"
+  ALBDNSName:
+    Value: !GetAtt LoadBalancerStack.Outputs.ALBDNSName
+  DBEndpoint:
+    Value: !GetAtt DatabaseStack.Outputs.DBClusterEndpoint
+  GitHubActionsRoleArn:
+    Value: !GetAtt CodeDeployStack.Outputs.GitHubActionsRoleArn
+    Description: Add this to GitHub Actions secrets as AWS_ROLE_ARN
+  CodeDeployApp:
+    Value: EatPulse
+  DeploymentGroup:
+    Value: !Sub "EatPulse-ASG-${Environment}"
+  ArtifactsBucket:
+    Value: !Ref ArtifactsBucketName

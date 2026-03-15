@@ -1,0 +1,241 @@
+/* ── CSS Variables ─────────────────────────────────────────────── */
+:root {
+  --green: #22c55e;
+  --green-light: #dcfce7;
+  --red: #ef4444;
+  --red-light: #fee2e2;
+  --orange: #f97316;
+  --blue: #3b82f6;
+  --bg: #f8fafc;
+  --card-bg: #ffffff;
+  --border: #e2e8f0;
+  --text: #1e293b;
+  --muted: #64748b;
+  --shadow: 0 1px 6px rgba(0,0,0,0.06);
+  --radius: 12px;
+  --font: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ── Navbar ────────────────────────────────────────────────────── */
+.navbar {
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.nav-brand {
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: var(--green);
+}
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.nav-username {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* ── Container ─────────────────────────────────────────────────── */
+.container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────── */
+.card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 1.25rem;
+}
+
+/* ── Summary Cards ─────────────────────────────────────────────── */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+.stat-card { text-align: center; padding: 1.5rem; }
+.stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-value { font-size: 2.25rem; font-weight: 800; color: var(--green); margin: 0.25rem 0; }
+.stat-sub { font-size: 0.8rem; color: var(--muted); }
+
+/* ── Week Nav ──────────────────────────────────────────────────── */
+.week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+}
+.week-label {
+  font-weight: 600;
+  font-size: 1rem;
+  min-width: 200px;
+  text-align: center;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.btn-outline:hover { background: var(--bg); border-color: var(--muted); }
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Timetable ─────────────────────────────────────────────────── */
+.timetable-section { overflow: hidden; }
+.timetable-wrapper { overflow-x: auto; }
+.section-title { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: var(--text); }
+
+.timetable {
+  display: grid;
+  grid-template-columns: 100px repeat(7, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 780px;
+}
+
+.tt-header-blank {
+  background: var(--bg);
+  padding: 0.5rem;
+}
+.tt-day-header {
+  background: var(--bg);
+  padding: 0.5rem 0.25rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.tt-day-header.today {
+  color: var(--green);
+  font-weight: 700;
+}
+.tt-meal-label {
+  background: var(--bg);
+  padding: 0.6rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.75rem;
+}
+.tt-cell {
+  background: var(--card-bg);
+  padding: 0.5rem 0.4rem;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.tt-cell.today-col { background: #f0fdf4; }
+.tt-empty { color: var(--muted); font-size: 0.75rem; opacity: 0.5; padding-top: 0.25rem; }
+
+.food-item {
+  border-radius: 6px;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.food-item.healthy { border-left: 3px solid var(--green); }
+.food-item.unhealthy { border-left: 3px solid var(--red); }
+.food-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+.food-cal {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.food-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-weight: 600;
+  display: inline-block;
+  width: fit-content;
+}
+.badge-healthy { background: var(--green-light); color: #16a34a; }
+.badge-unhealthy { background: var(--red-light); color: #dc2626; }
+
+/* ── Charts ────────────────────────────────────────────────────── */
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.chart-card { padding: 1.25rem; }
+.chart-title { font-size: 0.9rem; font-weight: 700; margin-bottom: 1rem; }
+
+/* ── Loading / States ──────────────────────────────────────────── */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .summary-cards { grid-template-columns: 1fr; }
+  .charts-row { grid-template-columns: 1fr; }
+  .container { padding: 1rem; }
+  .stat-value { font-size: 1.75rem; }
+}
