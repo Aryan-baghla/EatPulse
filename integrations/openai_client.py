@@ -40,7 +40,7 @@ def init_client(api_key: Optional[str] = None) -> AsyncOpenAI:
 
 async def chat(
     messages: list[dict],
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-2.0-flash",
     response_format: Optional[dict] = None,
     temperature: float = 0.3,
 ) -> str:
@@ -59,7 +59,7 @@ async def chat(
 
 async def chat_json(
     messages: list[dict],
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-2.0-flash",
     temperature: float = 0.1,
 ) -> dict:
     """Chat completion that always returns parsed JSON."""
@@ -75,7 +75,7 @@ async def chat_json(
 async def vision(
     image_bytes: bytes,
     prompt: str,
-    model: str = "gemini-1.5-flash",
+    model: str = "gemini-2.0-flash",
 ) -> str:
     """Send an image to GPT-4o vision and return the response text."""
     b64 = base64.b64encode(image_bytes).decode("utf-8")

@@ -113,7 +113,7 @@ async def generate_weekly_report(
     try:
         report_text = await openai_client.chat(
             [{"role": "user", "content": prompt}],
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             temperature=0.6,
         )
     except Exception as e:

@@ -77,7 +77,7 @@ async def _parse_from_text(text: str, meal_type: str) -> FoodEntry:
         {"role": "user", "content": f"I just ate: {text}"},
     ]
     try:
-        result = await openai_client.chat_json(messages, model="gemini-1.5-flash")
+        result = await openai_client.chat_json(messages, model="gemini-2.0-flash")
         return FoodEntry(
             food_name=result["food_name"],
             calories=int(result["calories"]),
