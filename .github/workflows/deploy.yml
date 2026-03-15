@@ -28,23 +28,30 @@ jobs:
           aws-region: ap-south-1
           role-session-name: EatPulseGitHubActions
 
-      - name: Get deployment config from CloudFormation outputs
+      - name: Get deployment config from CloudFormation
         id: cf-outputs
         run: |
-          STACK_OUTPUTS=$(aws cloudformation describe-stacks \
-            --stack-name eatpulse-prod \
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name eatpulse-codedeploy \
             --region ap-south-1 \
-            --query 'Stacks[0].Outputs' \
-            --output json)
-
-          BUCKET=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="ArtifactsBucket") | .OutputValue')
-          APP=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="CodeDeployApp") | .OutputValue')
-          GROUP=$(echo "$STACK_OUTPUTS" | jq -r '.[] | select(.OutputKey=="DeploymentGroup") | .OutputValue')
+            --query 'Stacks[0].Outputs[?OutputKey==`ArtifactsBucketName`].OutputValue' \
+            --output text)
+          APP=$(aws cloudformation describe-stacks \
+            --stack-name eatpulse-codedeploy \
+            --region ap-south-1 \
+            --query 'Stacks[0].Outputs[?OutputKey==`CodeDeployApplicationName`].OutputValue' \
+            --output text)
+          GROUP=$(aws cloudformation describe-stacks \
+            --stack-name eatpulse-codedeploy \
+            --region ap-south-1 \
+            --query 'Stacks[0].Outputs[?OutputKey==`DeploymentGroupName`].OutputValue' \
+            --output text)
 
           echo "bucket=$BUCKET" >> $GITHUB_OUTPUT
           echo "app=$APP" >> $GITHUB_OUTPUT
           echo "group=$GROUP" >> $GITHUB_OUTPUT
           echo "revision_key=deploy-${{ github.sha }}.zip" >> $GITHUB_OUTPUT
+          echo "Deploying to app=$APP group=$GROUP bucket=$BUCKET"
 
       - name: Create deployment bundle
         run: |
