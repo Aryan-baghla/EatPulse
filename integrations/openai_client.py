@@ -16,22 +16,31 @@ logger = logging.getLogger(__name__)
 _client: Optional[AsyncOpenAI] = None
 
 
+_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
 def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncOpenAI(api_key=settings.openai_api_key)
+        _client = AsyncOpenAI(
+            api_key=settings.gemini_api_key,
+            base_url=_GEMINI_BASE_URL,
+        )
     return _client
 
 
 def init_client(api_key: Optional[str] = None) -> AsyncOpenAI:
     global _client
-    _client = AsyncOpenAI(api_key=api_key or settings.openai_api_key)
+    _client = AsyncOpenAI(
+        api_key=api_key or settings.gemini_api_key,
+        base_url=_GEMINI_BASE_URL,
+    )
     return _client
 
 
 async def chat(
     messages: list[dict],
-    model: str = "gpt-4o-mini",
+    model: str = "gemini-1.5-flash",
     response_format: Optional[dict] = None,
     temperature: float = 0.3,
 ) -> str:
@@ -50,7 +59,7 @@ async def chat(
 
 async def chat_json(
     messages: list[dict],
-    model: str = "gpt-4o-mini",
+    model: str = "gemini-1.5-flash",
     temperature: float = 0.1,
 ) -> dict:
     """Chat completion that always returns parsed JSON."""
@@ -66,7 +75,7 @@ async def chat_json(
 async def vision(
     image_bytes: bytes,
     prompt: str,
-    model: str = "gpt-4o",
+    model: str = "gemini-1.5-flash",
 ) -> str:
     """Send an image to GPT-4o vision and return the response text."""
     b64 = base64.b64encode(image_bytes).decode("utf-8")

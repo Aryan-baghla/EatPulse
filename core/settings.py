@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
 
-    # OpenAI
-    openai_api_key: str = ""
+    # Gemini (used via OpenAI-compatible API)
+    gemini_api_key: str = ""
 
     # Database
     database_url: str = "postgresql://eatpulse:changeme@localhost:5432/eatpulse"

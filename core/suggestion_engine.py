@@ -120,7 +120,7 @@ async def _from_gpt(
         {"role": "user", "content": f"Suggest {count} {meal_type} options for me."},
     ]
     try:
-        result = await openai_client.chat_json(messages, model="gpt-4o-mini")
+        result = await openai_client.chat_json(messages, model="gemini-1.5-flash")
         suggestions = result.get("suggestions", [])
         return [
             SuggestedItem(
